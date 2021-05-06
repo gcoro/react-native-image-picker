@@ -165,6 +165,10 @@ RCT_EXPORT_METHOD(launchImageLibrary:(NSDictionary *)options callback:(RCTRespon
     
     NSURL *videoURL = info[UIImagePickerControllerMediaURL];
     NSURL *videoDestinationURL = [NSURL fileURLWithPath:path];
+    NSString *fileExtension = videoDestinationURL.pathExtension;
+  
+    self.response[@"fileName"] = fileName;
+    self.response[@"fileExtension"] = fileExtension;
 
     if ((target == camera) && [self.options[@"saveToPhotos"] boolValue]) {
         UISaveVideoAtPathToSavedPhotosAlbum(videoURL.path, nil, nil, nil);
