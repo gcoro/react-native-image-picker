@@ -1,6 +1,7 @@
 export type Callback = (response: ImagePickerResponse) => any;
 
 export interface ImageLibraryOptions {
+  selectionLimit?: number;
   mediaType: MediaType;
   maxWidth?: number;
   maxHeight?: number;
@@ -8,18 +9,17 @@ export interface ImageLibraryOptions {
   videoQuality?: AndroidVideoOptions | iOSVideoOptions;
   includeBase64?: boolean;
   copyTo?: 'cachesDirectory' | 'documentDirectory';
+  includeExtra?: boolean;
 }
 
-export interface CameraOptions extends ImageLibraryOptions {
+export interface CameraOptions
+  extends Omit<ImageLibraryOptions, 'selectionLimit'> {
   durationLimit?: number;
   saveToPhotos?: boolean;
   cameraType?: CameraType;
 }
 
-export interface ImagePickerResponse {
-  didCancel?: boolean;
-  errorCode?: ErrorCode;
-  errorMessage?: string;
+export interface Asset {
   base64?: string;
   uri?: string;
   fileCopyUri?: string;
@@ -27,9 +27,19 @@ export interface ImagePickerResponse {
   width?: number;
   height?: number;
   fileSize?: number;
-  type?: string; //TODO
+  type?: string;
   fileName?: string;
   duration?: number;
+  bitrate?: number;
+  timestamp?: string;
+  id?: string;
+}
+
+export interface ImagePickerResponse {
+  didCancel?: boolean;
+  errorCode?: ErrorCode;
+  errorMessage?: string;
+  assets?: Asset[];
 }
 
 export type PhotoQuality =
@@ -45,7 +55,7 @@ export type PhotoQuality =
   | 0.9
   | 1;
 export type CameraType = 'back' | 'front';
-export type MediaType = 'photo' | 'video';
+export type MediaType = 'photo' | 'video' | 'mixed';
 export type AndroidVideoOptions = 'low' | 'high';
 export type iOSVideoOptions = 'low' | 'medium' | 'high';
 export type ErrorCode = 'camera_unavailable' | 'permission' | 'others';

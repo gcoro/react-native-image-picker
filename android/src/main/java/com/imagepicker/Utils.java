@@ -2,30 +2,30 @@ package com.imagepicker;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.hardware.camera2.CameraCharacteristics;
-import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
-import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.webkit.MimeTypeMap;
 
+import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.FileProvider;
 import androidx.exifinterface.media.ExifInterface;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.ReadableMap;
+import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 
 import java.io.ByteArrayOutputStream;
@@ -34,7 +34,10 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
 import java.io.FileOutputStream;
 
@@ -46,6 +49,9 @@ public class Utils {
     public static String errCameraUnavailable = "camera_unavailable";
     public static String errPermission = "permission";
     public static String errOthers = "others";
+
+    public static String mediaTypePhoto = "photo";
+    public static String mediaTypeVideo = "video";
 
     public static String cameraPermissionDescription = "This library does not require Manifest.permission.CAMERA, if you add this permission in manifest then you have to obtain the same.";
 
@@ -78,9 +84,11 @@ public class Utils {
 
         if (mediaType.equals("video")) {
             fileDetails.put(MediaStore.Video.Media.DISPLAY_NAME, UUID.randomUUID().toString());
+            fileDetails.put(MediaStore.Video.Media.MIME_TYPE, resolver.getType(uri));
             mediaStoreUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, fileDetails);
         } else {
             fileDetails.put(MediaStore.Images.Media.DISPLAY_NAME, UUID.randomUUID().toString());
+            fileDetails.put(MediaStore.Images.Media.MIME_TYPE, resolver.getType(uri));
             mediaStoreUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, fileDetails);
         }
 
@@ -203,7 +211,7 @@ public class Utils {
 
         } catch (Exception e) {
             e.printStackTrace();
-            return  null;
+            return uri; // cannot resize the image, return the original uri
         }
     }
 
@@ -253,14 +261,6 @@ public class Utils {
         }
     }
 
-    static int getDuration(Uri uri, Context context) {
-        MediaMetadataRetriever m = new MediaMetadataRetriever();
-        m.setDataSource(context, uri);
-        int duration = Math.round(Float.parseFloat(m.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION))) / 1000;
-        m.release();
-        return duration;
-    }
-
     static boolean shouldResizeImage(int origWidth, int origHeight, Options options) {
         if ((options.maxWidth == 0 || options.maxHeight == 0) && options.quality == 100) {
             return false;
@@ -288,6 +288,7 @@ public class Utils {
         switch (mimeType) {
             case "image/jpeg": return "jpg";
             case "image/png": return "png";
+            case "image/gif": return "gif";
         }
         return "jpg";
     }
@@ -304,9 +305,8 @@ public class Utils {
     static boolean isValidRequestCode(int requestCode) {
         switch (requestCode) {
             case REQUEST_LAUNCH_IMAGE_CAPTURE:
-            case REQUEST_LAUNCH_IMAGE_LIBRARY:
             case REQUEST_LAUNCH_VIDEO_CAPTURE:
-            case REQUEST_LAUNCH_VIDEO_LIBRARY: return true;
+            case REQUEST_LAUNCH_LIBRARY: return true;
             default: return false;
         }
     }
@@ -367,8 +367,62 @@ public class Utils {
         }
     }
 
-    static ReadableMap getResponseMap(Uri uri, Options options, Context context) {
+    static boolean isImageType(Uri uri, Context context) {
+      return Utils.isContentType("image/", uri, context);
+    }
+
+    static boolean isVideoType(Uri uri, Context context) {
+        return Utils.isContentType("video/", uri, context);
+    }
+
+  /**
+   * Verifies the content typs of a file URI. A helper function
+   * for isVideoType and isImageType
+   *
+   * @param contentMimeType - "video/" or "image/"
+   * @param uri - file uri
+   * @param context - react context
+   * @return a boolean to determine if file is of specified content type i.e. image or video
+   */
+    static boolean isContentType(String contentMimeType, Uri uri, Context context) {
+      final String mimeType = getMimeType(uri, context);
+
+      if(mimeType != null) {
+        return mimeType.contains(contentMimeType);
+      }
+
+      return false;
+    }
+
+    static @Nullable String getMimeType(Uri uri, Context context) {
+      if (uri.getScheme().equals("file")) {
+        return getMimeTypeFromFileUri(uri);
+      }
+
+      ContentResolver contentResolver = context.getContentResolver();
+      return contentResolver.getType(uri);
+    }
+
+    static List<Uri> collectUrisFromData(Intent data) {
+        // Default Gallery app on older Android versions doesn't support multiple image
+        // picking and thus never uses clip data.
+        if (data.getClipData() == null) {
+            return Collections.singletonList(data.getData());
+        }
+
+        ClipData clipData = data.getClipData();
+        List<Uri> fileUris = new ArrayList<>(clipData.getItemCount());
+
+        for (int i = 0; i < clipData.getItemCount(); ++i) {
+            fileUris.add(clipData.getItemAt(i).getUri());
+        }
+
+        return fileUris;
+    }
+
+    static ReadableMap getImageResponseMap(Uri uri, Options options, Context context) {
         String fileName = uri.getLastPathSegment();
+        ImageMetadata imageMetadata = new ImageMetadata(uri, context);
         int[] dimensions = getImageDimensions(uri, context);
 
         WritableMap map = Arguments.createMap();
@@ -378,6 +432,7 @@ public class Utils {
         map.putString("type", getMimeTypeFromFileUri(uri));
         map.putInt("width", dimensions[0]);
         map.putInt("height", dimensions[1]);
+        map.putString("type", getMimeType(uri, context));
 
         if (options.includeBase64) {
             map.putString("base64", getBase64String(uri, context));
@@ -402,15 +457,25 @@ public class Utils {
         } else {
             map.putString("fileCopyUri", uri.toString());
         }
+        
+        if(options.includeExtra) {
+          // Add more extra data here ...
+          map.putString("timestamp", imageMetadata.getDateTime());
+          map.putString("id", fileName);
+        }
+
         return map;
     }
 
     static ReadableMap getVideoResponseMap(Uri uri, Options options, Context context) {
         String fileName = uri.getLastPathSegment();
         WritableMap map = Arguments.createMap();
+        VideoMetadata videoMetadata = new VideoMetadata(uri, context);
+
         map.putString("uri", uri.toString());
         map.putDouble("fileSize", getFileSize(uri, context));
-        map.putInt("duration", getDuration(uri, context));
+        map.putInt("duration", videoMetadata.getDuration());
+        map.putInt("bitrate", videoMetadata.getBitrate());
         map.putString("fileName", fileName);
 
         if (options.copyTo != null && options.copyTo.equals("documentDirectory")) {
@@ -432,7 +497,42 @@ public class Utils {
         } else {
             map.putString("fileCopyUri", uri.toString());
         }
+        map.putString("type", getMimeType(uri, context));
+        map.putInt("width", videoMetadata.getWidth());
+        map.putInt("height", videoMetadata.getHeight());
+
+        if(options.includeExtra) {
+          // Add more extra data here ...
+          map.putString("timestamp", videoMetadata.getDateTime());
+          map.putString("id", fileName);
+        }
+
         return map;
+    }
+
+    static ReadableMap getResponseMap(List<Uri> fileUris, Options options, Context context) throws RuntimeException {
+        WritableArray assets = Arguments.createArray();
+
+        for(int i = 0; i < fileUris.size(); ++i) {
+            Uri uri = fileUris.get(i);
+
+            if (isImageType(uri, context)) {
+                if (uri.getScheme().contains("content")) {
+                    uri = getAppSpecificStorageUri(uri, context);
+                }
+                uri = resizeImage(uri, context, options);
+                assets.pushMap(getImageResponseMap(uri, options, context));
+            } else if (isVideoType(uri, context)) {
+                assets.pushMap(getVideoResponseMap(uri, options, context));
+            } else {
+                throw new RuntimeException("Unsupported file type");
+            }
+        }
+
+        WritableMap response = Arguments.createMap();
+        response.putArray("assets", assets);
+
+        return response;
     }
 
     static ReadableMap getErrorMap(String errCode, String errMsg) {
