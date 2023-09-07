@@ -1,7 +1,6 @@
 export type Callback = (response: ImagePickerResponse) => any;
 
-export interface ImageLibraryOptions {
-  selectionLimit?: number;
+export interface OptionsCommon {
   mediaType: MediaType;
   maxWidth?: number;
   maxHeight?: number;
@@ -10,10 +9,26 @@ export interface ImageLibraryOptions {
   includeBase64?: boolean;
   copyTo?: 'cachesDirectory' | 'documentDirectory';
   includeExtra?: boolean;
+  formatAsMp4?: boolean;
+  presentationStyle?:
+    | 'currentContext'
+    | 'fullScreen'
+    | 'pageSheet'
+    | 'formSheet'
+    | 'popover'
+    | 'overFullScreen'
+    | 'overCurrentContext'
+    assetRepresentationMode?:
+    | 'auto'
+    | 'current'
+    | 'compatible';
 }
 
-export interface CameraOptions
-  extends Omit<ImageLibraryOptions, 'selectionLimit'> {
+export interface ImageLibraryOptions extends OptionsCommon {
+  selectionLimit?: number;
+}
+
+export interface CameraOptions extends OptionsCommon {
   durationLimit?: number;
   saveToPhotos?: boolean;
   cameraType?: CameraType;

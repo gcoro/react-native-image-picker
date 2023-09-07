@@ -8,6 +8,7 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.hardware.camera2.CameraCharacteristics;
@@ -15,6 +16,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.webkit.MimeTypeMap;
 
@@ -41,7 +43,7 @@ import java.util.List;
 import java.util.UUID;
 import java.io.FileOutputStream;
 
-import static com.imagepicker.ImagePickerModule.*;
+import static com.imagepicker.ImagePickerModuleImpl.*;
 
 public class Utils {
     public static String fileNamePrefix = "rn_image_picker_lib_temp_";
@@ -57,7 +59,7 @@ public class Utils {
 
     public static File createFile(Context reactContext, String fileType) {
         try {
-            String filename = fileNamePrefix  + UUID.randomUUID() + "." + fileType;
+            String filename = fileNamePrefix + UUID.randomUUID() + "." + fileType;
 
             // getCacheDir will auto-clean according to android docs
             File fileDir = reactContext.getCacheDir();
@@ -96,9 +98,8 @@ public class Utils {
     }
 
     public static void copyUri(Uri fromUri, Uri toUri, ContentResolver resolver) {
-        try {
-            OutputStream os = resolver.openOutputStream(toUri);
-            InputStream is = resolver.openInputStream(fromUri);
+        try (OutputStream os = resolver.openOutputStream(toUri);
+             InputStream is = resolver.openInputStream(fromUri)) {
 
             byte[] buffer = new byte[8192];
             int bytesRead;
@@ -106,7 +107,6 @@ public class Utils {
             while ((bytesRead = is.read(buffer)) != -1) {
                 os.write(buffer, 0, bytesRead);
             }
-
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -119,7 +119,22 @@ public class Utils {
         }
         ContentResolver contentResolver = context.getContentResolver();
         String fileType = getFileTypeFromMime(contentResolver.getType(sharedStorageUri));
-        Uri toUri =  Uri.fromFile(createFile(context, fileType));
+
+        if (fileType == null) {
+            Cursor cursor =
+                    contentResolver.query(sharedStorageUri, null, null, null, null);
+            if (cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                String fileName = cursor.getString(nameIndex);
+                int lastDotIndex = fileName.lastIndexOf('.');
+
+                if (lastDotIndex != -1) {
+                    fileType = fileName.substring(lastDotIndex + 1);
+                }
+            }
+        }
+
+        Uri toUri = Uri.fromFile(createFile(context, fileType));
         copyUri(sharedStorageUri, toUri, contentResolver);
         return toUri;
     }
@@ -142,18 +157,15 @@ public class Utils {
     }
 
     public static int[] getImageDimensions(Uri uri, Context reactContext) {
-        InputStream inputStream;
-        try {
-            inputStream = reactContext.getContentResolver().openInputStream(uri);
-        } catch (FileNotFoundException e) {
+        try (InputStream inputStream = reactContext.getContentResolver().openInputStream(uri)) {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            BitmapFactory.decodeStream(inputStream, null, options);
+            return new int[]{options.outWidth, options.outHeight};
+        } catch (IOException e) {
             e.printStackTrace();
             return new int[]{0, 0};
         }
-
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inJustDecodeBounds = true;
-        BitmapFactory.decodeStream(inputStream,null, options);
-        return new int[]{options.outWidth, options.outHeight};
     }
 
     static boolean hasPermission(final Activity activity) {
@@ -162,27 +174,21 @@ public class Utils {
     }
 
     static String getBase64String(Uri uri, Context reactContext) {
-        InputStream inputStream;
-        try {
-            inputStream = reactContext.getContentResolver().openInputStream(uri);
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-            return null;
-        }
+        try (InputStream inputStream = reactContext.getContentResolver().openInputStream(uri);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] bytes;
+            byte[] buffer = new byte[8192];
+            int bytesRead;
 
-        byte[] bytes;
-        byte[] buffer = new byte[8192];
-        int bytesRead;
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        try {
             while ((bytesRead = inputStream.read(buffer)) != -1) {
                 output.write(buffer, 0, bytesRead);
             }
+            bytes = output.toByteArray();
+            return Base64.encodeToString(bytes, Base64.NO_WRAP);
         } catch (IOException e) {
             e.printStackTrace();
+            return null;
         }
-        bytes = output.toByteArray();
-        return Base64.encodeToString(bytes, Base64.NO_WRAP);
     }
 
     // Resize image
@@ -197,17 +203,25 @@ public class Utils {
 
             int[] newDimens = getImageDimensBasedOnConstraints(origDimens[0], origDimens[1], options);
 
-            InputStream imageStream = context.getContentResolver().openInputStream(uri);
-            String mimeType =  getMimeTypeFromFileUri(uri);
-            Bitmap b = BitmapFactory.decodeStream(imageStream);
-            b = Bitmap.createScaledBitmap(b, newDimens[0], newDimens[1], true);
-            String originalOrientation = getOrientation(uri, context);
+            try (InputStream imageStream = context.getContentResolver().openInputStream(uri)) {
+                String mimeType = getMimeType(uri, context);
+                Bitmap b = BitmapFactory.decodeStream(imageStream);
 
-            File file = createFile(context, getFileTypeFromMime(mimeType));
-            OutputStream os = context.getContentResolver().openOutputStream(Uri.fromFile(file));
-            b.compress(getBitmapCompressFormat(mimeType), options.quality, os);
-            setOrientation(file, originalOrientation, context);
-            return Uri.fromFile(file);
+                b = Bitmap.createScaledBitmap(b, newDimens[0], newDimens[1], true);
+                String originalOrientation = getOrientation(uri, context);
+
+                File file = createFile(context, getFileTypeFromMime(mimeType));
+
+                try (OutputStream os = context.getContentResolver().openOutputStream(Uri.fromFile(file))) {
+                    b.compress(getBitmapCompressFormat(mimeType), options.quality, os);
+                }
+
+                setOrientation(file, originalOrientation, context);
+
+                deleteFile(uri);
+
+                return Uri.fromFile(file);
+            }
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -252,8 +266,7 @@ public class Utils {
     }
 
     static double getFileSize(Uri uri, Context context) {
-        try {
-            ParcelFileDescriptor f = context.getContentResolver().openFileDescriptor(uri, "r");
+        try (ParcelFileDescriptor f = context.getContentResolver().openFileDescriptor(uri, "r")) {
             return f.getStatSize();
         } catch (Exception e) {
             e.printStackTrace();
@@ -275,8 +288,10 @@ public class Utils {
 
     static Bitmap.CompressFormat getBitmapCompressFormat(String mimeType) {
         switch (mimeType) {
-            case "image/jpeg": return Bitmap.CompressFormat.JPEG;
-            case "image/png": return Bitmap.CompressFormat.PNG;
+            case "image/jpeg":
+                return Bitmap.CompressFormat.JPEG;
+            case "image/png":
+                return Bitmap.CompressFormat.PNG;
         }
         return Bitmap.CompressFormat.JPEG;
     }
@@ -286,28 +301,30 @@ public class Utils {
             return "jpg";
         }
         switch (mimeType) {
-            case "image/jpeg": return "jpg";
-            case "image/png": return "png";
-            case "image/gif": return "gif";
+            case "image/jpeg":
+                return "jpg";
+            case "image/png":
+                return "png";
+            case "image/gif":
+                return "gif";
         }
-        return "jpg";
+        return MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType);
     }
 
     static void deleteFile(Uri uri) {
         new File(uri.getPath()).delete();
     }
 
-    static String getMimeTypeFromFileUri(Uri uri) {
-        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(MimeTypeMap.getFileExtensionFromUrl(uri.toString()));
-    }
 
     // Since library users can have many modules in their project, we should respond to onActivityResult only for our request.
     static boolean isValidRequestCode(int requestCode) {
         switch (requestCode) {
             case REQUEST_LAUNCH_IMAGE_CAPTURE:
             case REQUEST_LAUNCH_VIDEO_CAPTURE:
-            case REQUEST_LAUNCH_LIBRARY: return true;
-            default: return false;
+            case REQUEST_LAUNCH_LIBRARY:
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -368,39 +385,65 @@ public class Utils {
     }
 
     static boolean isImageType(Uri uri, Context context) {
-      return Utils.isContentType("image/", uri, context);
+        return Utils.isContentType("image/", uri, context);
     }
 
     static boolean isVideoType(Uri uri, Context context) {
         return Utils.isContentType("video/", uri, context);
     }
 
-  /**
-   * Verifies the content typs of a file URI. A helper function
-   * for isVideoType and isImageType
-   *
-   * @param contentMimeType - "video/" or "image/"
-   * @param uri - file uri
-   * @param context - react context
-   * @return a boolean to determine if file is of specified content type i.e. image or video
-   */
+    /**
+     * Verifies the content typs of a file URI. A helper function
+     * for isVideoType and isImageType
+     *
+     * @param contentMimeType - "video/" or "image/"
+     * @param uri             - file uri
+     * @param context         - react context
+     * @return a boolean to determine if file is of specified content type i.e. image or video
+     */
     static boolean isContentType(String contentMimeType, Uri uri, Context context) {
-      final String mimeType = getMimeType(uri, context);
+        final String mimeType = getMimeType(uri, context);
 
-      if(mimeType != null) {
-        return mimeType.contains(contentMimeType);
-      }
+        if (mimeType != null) {
+            return mimeType.contains(contentMimeType);
+        }
 
-      return false;
+        return false;
     }
 
-    static @Nullable String getMimeType(Uri uri, Context context) {
-      if (uri.getScheme().equals("file")) {
-        return getMimeTypeFromFileUri(uri);
-      }
+    static String getMimeType(Uri uri, Context context) {
+        if (uri.getScheme().equals("file")) {
+            return MimeTypeMap.getSingleton().getMimeTypeFromExtension(MimeTypeMap.getFileExtensionFromUrl(uri.toString()));
+        } else if (uri.getScheme().equals("content")) {
+            ContentResolver contentResolver = context.getContentResolver();
+            String contentResolverMimeType = contentResolver.getType(uri);
 
-      ContentResolver contentResolver = context.getContentResolver();
-      return contentResolver.getType(uri);
+            if (contentResolverMimeType.isBlank()) {
+                return getMimeTypeFromCursor(contentResolver, uri);
+            } else {
+                return contentResolverMimeType;
+            }
+        }
+
+        return "Unknown";
+    }
+
+    static @Nullable String getMimeTypeFromCursor(ContentResolver contentResolver, Uri uri) {
+        Cursor cursor = contentResolver.query(uri, null, null, null, null);
+        String fileType = "Unknown";
+        try {
+            if (cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                String fileName = cursor.getString(nameIndex);
+                int lastDotIndex = fileName.lastIndexOf('.');
+                if (lastDotIndex != -1) {
+                    fileType = fileName.substring(lastDotIndex + 1);
+                }
+            }
+        } finally {
+            cursor.close();
+        }
+        return fileType;
     }
 
     static List<Uri> collectUrisFromData(Intent data) {
@@ -429,7 +472,6 @@ public class Utils {
         map.putString("uri", uri.toString());
         map.putDouble("fileSize", getFileSize(uri, context));
         map.putString("fileName", fileName);
-        map.putString("type", getMimeTypeFromFileUri(uri));
         map.putInt("width", dimensions[0]);
         map.putInt("height", dimensions[1]);
         map.putString("type", getMimeType(uri, context));
@@ -458,10 +500,10 @@ public class Utils {
             map.putString("fileCopyUri", uri.toString());
         }
         
-        if(options.includeExtra) {
-          // Add more extra data here ...
-          map.putString("timestamp", imageMetadata.getDateTime());
-          map.putString("id", fileName);
+        if (options.includeExtra) {
+            // Add more extra data here ...
+            map.putString("timestamp", imageMetadata.getDateTime());
+            map.putString("id", fileName);
         }
 
         return map;
@@ -501,10 +543,10 @@ public class Utils {
         map.putInt("width", videoMetadata.getWidth());
         map.putInt("height", videoMetadata.getHeight());
 
-        if(options.includeExtra) {
-          // Add more extra data here ...
-          map.putString("timestamp", videoMetadata.getDateTime());
-          map.putString("id", fileName);
+        if (options.includeExtra) {
+            // Add more extra data here ...
+            map.putString("timestamp", videoMetadata.getDateTime());
+            map.putString("id", fileName);
         }
 
         return map;
@@ -513,9 +555,10 @@ public class Utils {
     static ReadableMap getResponseMap(List<Uri> fileUris, Options options, Context context) throws RuntimeException {
         WritableArray assets = Arguments.createArray();
 
-        for(int i = 0; i < fileUris.size(); ++i) {
+        for (int i = 0; i < fileUris.size(); ++i) {
             Uri uri = fileUris.get(i);
 
+            // Call getAppSpecificStorageUri in the if block to avoid copying unsupported files
             if (isImageType(uri, context)) {
                 if (uri.getScheme().contains("content")) {
                     uri = getAppSpecificStorageUri(uri, context);
@@ -523,6 +566,9 @@ public class Utils {
                 uri = resizeImage(uri, context, options);
                 assets.pushMap(getImageResponseMap(uri, options, context));
             } else if (isVideoType(uri, context)) {
+                if (uri.getScheme().contains("content")) {
+                    uri = getAppSpecificStorageUri(uri, context);
+                }
                 assets.pushMap(getVideoResponseMap(uri, options, context));
             } else {
                 throw new RuntimeException("Unsupported file type");

@@ -1,6 +1,13 @@
 import * as React from 'react';
-import {StyleSheet, SafeAreaView, View, Image, ScrollView} from 'react-native';
-import {DemoTitle, DemoButton, DemoResponse} from './components';
+import {
+  Image,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
+import {DemoButton, DemoResponse, DemoTitle} from './components';
 
 import * as ImagePicker from 'react-native-image-picker';
 
@@ -36,12 +43,12 @@ export default function App() {
         <DemoResponse>{response}</DemoResponse>
 
         {response?.assets &&
-          response?.assets.map(({uri}) => (
-            <View key={uri} style={styles.image}>
+          response?.assets.map(({uri}: {uri: string}) => (
+            <View key={uri} style={styles.imageContainer}>
               <Image
                 resizeMode="cover"
                 resizeMethod="scale"
-                style={{width: 200, height: 200}}
+                style={styles.image}
                 source={{uri: uri}}
               />
             </View>
@@ -61,10 +68,13 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     marginVertical: 8,
   },
-
-  image: {
+  imageContainer: {
     marginVertical: 24,
     alignItems: 'center',
+  },
+  image: {
+    width: 200,
+    height: 200,
   },
 });
 
@@ -89,8 +99,6 @@ const actions: Action[] = [
     title: 'Select Image',
     type: 'library',
     options: {
-      maxHeight: 200,
-      maxWidth: 200,
       selectionLimit: 0,
       mediaType: 'photo',
       includeBase64: false,
@@ -102,6 +110,7 @@ const actions: Action[] = [
     type: 'capture',
     options: {
       saveToPhotos: true,
+      formatAsMp4: true,
       mediaType: 'video',
       includeExtra,
     },
@@ -112,11 +121,12 @@ const actions: Action[] = [
     options: {
       selectionLimit: 0,
       mediaType: 'video',
+      formatAsMp4: true,
       includeExtra,
     },
   },
   {
-    title: `Select Image or Video\n(mixed)`,
+    title: 'Select Image or Video\n(mixed)',
     type: 'library',
     options: {
       selectionLimit: 0,
@@ -125,3 +135,16 @@ const actions: Action[] = [
     },
   },
 ];
+
+if (Platform.OS === 'ios') {
+  actions.push({
+    title: 'Take Image or Video\n(mixed)',
+    type: 'capture',
+    options: {
+      saveToPhotos: true,
+      mediaType: 'mixed',
+      includeExtra,
+      presentationStyle: 'fullScreen',
+    },
+  });
+}
