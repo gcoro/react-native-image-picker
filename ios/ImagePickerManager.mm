@@ -319,10 +319,10 @@ CGImagePropertyOrientation CGImagePropertyOrientationForUIImageOrientation(UIIma
         NSError *copyError;
         NSString *copyDestination = self.options[@"copyTo"] ? self.options[@"copyTo"] : nil;
         NSURL* maybeFileCopyPath = copyDestination ? [ImagePickerManager copyToUniqueDestinationFrom:videoDestinationURL usingDestinationPreset:copyDestination error:copyError] : videoDestinationURL;
-        asset[@"fileCopyUri"] =  maybeFileCopyPath.absoluteString;
+        response[@"fileCopyUri"] =  maybeFileCopyPath.absoluteString;
     
         if (copyError) {
-            asset[@"copyError"] = copyError.description;
+            response[@"copyError"] = copyError.description;
         }
     
         if(phAsset){
