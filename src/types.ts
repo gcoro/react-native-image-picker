@@ -17,15 +17,13 @@ export interface OptionsCommon {
     | 'formSheet'
     | 'popover'
     | 'overFullScreen'
-    | 'overCurrentContext'
-    assetRepresentationMode?:
-    | 'auto'
-    | 'current'
-    | 'compatible';
+    | 'overCurrentContext';
+  assetRepresentationMode?: 'auto' | 'current' | 'compatible';
 }
 
 export interface ImageLibraryOptions extends OptionsCommon {
   selectionLimit?: number;
+  restrictMimeTypes?: string[];
 }
 
 export interface CameraOptions extends OptionsCommon {
@@ -41,6 +39,7 @@ export interface Asset {
   copyError?: string;
   width?: number;
   height?: number;
+  originalPath?: string;
   fileSize?: number;
   type?: string;
   fileName?: string;
