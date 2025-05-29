@@ -10,6 +10,8 @@ public class Options {
     Boolean includeExtra;
     int videoQuality = 1;
     int quality;
+    int conversionQuality = 92;
+    Boolean convertToJpeg = true;
     int maxWidth;
     int maxHeight;
     Boolean saveToPhotos;
@@ -17,9 +19,13 @@ public class Options {
     Boolean useFrontCamera = false;
     String mediaType;
     String copyTo;
+    String[] restrictMimeTypes;
 
     Options(ReadableMap options) {
         mediaType = options.getString("mediaType");
+        restrictMimeTypes = options.getArray("restrictMimeTypes").toArrayList().stream()
+                                .map(Object::toString)
+                                .toArray(size -> new String[size]);
         selectionLimit = options.getInt("selectionLimit");
         includeBase64 = options.getBoolean("includeBase64");
         includeExtra = options.getBoolean("includeExtra");
@@ -27,6 +33,15 @@ public class Options {
         String videoQualityString = options.getString("videoQuality");
         if (!TextUtils.isEmpty(videoQualityString) && !videoQualityString.toLowerCase().equals("high")) {
             videoQuality = 0;
+        }
+
+        if (options.hasKey("conversionQuality")) {
+            conversionQuality = (int) (options.getDouble("conversionQuality") * 100);
+        }
+
+        String assetRepresentationMode = options.getString("assetRepresentationMode");
+        if (!TextUtils.isEmpty(assetRepresentationMode) && assetRepresentationMode.toLowerCase().equals("current")) {
+            convertToJpeg = false;
         }
 
         if (options.getString("cameraType").equals("front")) {
